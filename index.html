@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover" />
+  <title>Тратометр</title>
+  <meta name="description" content="Офлайн-трекер личных финансов. Работает без сети." />
+
+  <!-- PWA -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <meta name="theme-color" content="#101513" />
+
+  <!-- iOS: установка на рабочий стол, полноэкранный режим -->
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Тратометр" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <link rel="icon" type="image/png" sizes="32x32" href="icons/favicon-32.png" />
+  <link rel="icon" href="icons/icon-192.png" />
+
+  <link rel="stylesheet" href="app.css" />
+</head>
+<body>
+  <div id="root">
+    <div id="boot" class="boot"><div class="boot-spinner"></div></div>
+  </div>
+
+  <script>
+    // Регистрируем service worker — без него нет офлайна. Путь относительный,
+    // поэтому scope совпадает с папкой приложения (корень или подпапка Pages).
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+      });
+    }
+    // Просим браузер не вытеснять данные (важно для iOS PWA — иначе историю
+    // операций может стереть при нехватке места / долгом простое).
+    if (navigator.storage && navigator.storage.persist) {
+      navigator.storage.persist().catch(() => {});
+    }
+  </script>
+  <script src="app.js" defer></script>
+</body>
+</html>
