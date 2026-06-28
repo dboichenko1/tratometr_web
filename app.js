@@ -130,6 +130,11 @@ function onAccentAuto(hex){
   const L=luminance(hex);
   return ((L+0.05)*(L+0.05) > 0.15) ? '#1E2A26' : '#FFFFFF';
 }
+// Цвет надписей на акценте: авто-контраст / принудительно светлый / тёмный.
+function resolveOnAccent(accent, mode){ if (mode==='light') return '#FFFFFF'; if (mode==='dark') return '#1E2A26'; return onAccentAuto(accent); }
+function isFullPalette(id){ return !!FULL_THEMES.find(t=>t.id===id); }
+// Сменить акцент: если совпал с базовым пресетом — берём его id, иначе 'custom'.
+function setAccentColor(color){ const m=ACCENTS.find(a=>a.accent===color); S.data.settings.themePreset = m?m.id:'custom'; S.data.settings.accentColor=color; }
 
 /* -------------------------------------------------- Форматирование --------- */
 const RU='ru-RU';
@@ -339,36 +344,57 @@ function trimmedMean(values, trim){
   if (!kept.length) return 0;
   return kept.reduce((a,b)=>a+b,0)/kept.length;
 }
-function gaugeData(){
-  const n=new Date(), today=startOfDay(n);
-  const windowStart=new Date(n.getFullYear(),n.getMonth(),n.getDate()-30);
+// Окно расходов за 30 дней + самый ранний расход (для дневного датчика/уведомлений).
+function _expenseWindow(){
+  const now=new Date();
+  const windowStart=new Date(now.getFullYear(),now.getMonth(),now.getDate()-30);
   const exp=S.data.transactions.filter(t=>t.type==='expense');
+  const winExp=exp.filter(t=>t.date>=windowStart.getTime()).map(t=>({amount:t.amount,date:t.date}));
+  const firstExp=exp.length ? Math.min.apply(null, exp.map(t=>t.date)) : null;
+  return {now, windowStart, exp, winExp, firstExp};
+}
+// Оценка дневного перерасхода — порт spending_alert.dart. windowExpenses —
+// расходы за ~30 дней как [{amount,date}]; firstExpenseMs — самый ранний расход.
+function evaluateSpendingAlert(now, windowExpenses, firstExpenseMs, lastNotifiedDay, threshold){
+  threshold = threshold==null ? 0.30 : threshold;
+  const minHistoryDays=7, trimFraction=0.10, windowDays=30;
+  const today=startOfDay(now);
+  let todayTotal=0; const byDay={};
+  for (const tx of windowExpenses){ const day=startOfDay(new Date(tx.date)); if (sameDay(day,today)) todayTotal+=tx.amount; else if (day<today) byDay[+day]=(byDay[+day]||0)+tx.amount; }
+  if (firstExpenseMs==null) return {active:false, shouldNotify:false, todayTotal, baseline:0, percentAbove:null, reason:'no_history'};
+  const fed=startOfDay(new Date(firstExpenseMs));
+  if (calDaysBetween(fed, today) < minHistoryDays) return {active:false, shouldNotify:false, todayTotal, baseline:0, percentAbove:null, reason:'history_too_short'};
+  const windowStart=new Date(today.getFullYear(),today.getMonth(),today.getDate()-windowDays);
+  let d=startOfDay(windowStart>fed?windowStart:fed);
+  const daily=[]; while (d<today){ daily.push(byDay[+d]||0); d=addDays(d,1); }
+  const baseline=trimmedMean(daily, trimFraction);
+  if (baseline<=0) return {active:true, shouldNotify:false, todayTotal, baseline, percentAbove:null, reason:'baseline_zero'};
+  const percentAbove=(todayTotal-baseline)/baseline*100;
+  const over = todayTotal >= baseline*(1+threshold);
+  const already = lastNotifiedDay!=null && sameDay(startOfDay(new Date(lastNotifiedDay)), today);
+  return {active:true, shouldNotify: over&&!already, todayTotal, baseline, percentAbove, reason: !over?'within_threshold':(already?'already_notified_today':'over_threshold')};
+}
+// Оценка месячного лимита — порт limit_alert.dart.
+function evaluateLimitAlert(now, monthExpense, limit, lastNotifiedDay){
+  if (!(limit>0)) return {active:false, monthExpense:0, limit:0, ratio:0, shouldNotify:false, percentOfLimit:0};
+  const ratio=monthExpense/limit;
+  const already = lastNotifiedDay!=null && sameDay(startOfDay(new Date(lastNotifiedDay)), startOfDay(now));
+  return {active:true, monthExpense, limit, ratio, shouldNotify: monthExpense>=limit && !already, percentOfLimit: ratio*100};
+}
+function gaugeData(){
+  const {now, windowStart, exp, winExp, firstExp}=_expenseWindow();
   const inc=S.data.transactions.filter(t=>t.type==='income');
-  let todayExpense=0; const byDay={}; let firstExp=null;
-  for (const t of exp){
-    const d=startOfDay(new Date(t.date));
-    if (firstExp===null || t.date<firstExp) firstExp=t.date;
-    if (t.date>=windowStart.getTime()){
-      if (sameDay(d,today)) todayExpense+=t.amount;
-      else if (d<today) byDay[+d]=(byDay[+d]||0)+t.amount;
-    }
-  }
-  let dayRatio=null;
-  const firstExpDay = firstExp!=null ? startOfDay(new Date(firstExp)) : null;
-  if (firstExpDay && calDaysBetween(firstExpDay,today)>=7){
-    let d=startOfDay(windowStart>firstExpDay?windowStart:firstExpDay);
-    const daily=[];
-    while (d<today){ daily.push(byDay[+d]||0); d=addDays(d,1); }
-    const baseline=trimmedMean(daily,0.10);
-    if (baseline>0) dayRatio=todayExpense/baseline;
-  }
-  const monStart=new Date(n.getFullYear(),n.getMonth(),1).getTime();
+  const thr=S.data.settings.spendAlertThreshold;
+  const sa=evaluateSpendingAlert(now, winExp, firstExp, null, thr);
+  const dayRatio=(sa.active && sa.baseline>0) ? sa.todayTotal/sa.baseline : null;
+  const today=startOfDay(now);
+  const monStart=new Date(now.getFullYear(),now.getMonth(),1).getTime();
   const monthExpense=exp.filter(t=>t.date>=monStart).reduce((s,t)=>s+t.amount,0);
   const monthIncome=inc.filter(t=>t.date>=monStart).reduce((s,t)=>s+t.amount,0);
-  const last30Expense=exp.filter(t=>t.date>=windowStart.getTime()).reduce((s,t)=>s+t.amount,0);
+  const last30Expense=winExp.reduce((s,t)=>s+t.amount,0);
   const last30Income=inc.filter(t=>t.date>=windowStart.getTime()).reduce((s,t)=>s+t.amount,0);
   const todayIncome=inc.filter(t=>sameDay(startOfDay(new Date(t.date)),today)).reduce((s,t)=>s+t.amount,0);
-  const limit=S.data.settings.monthlyLimit, target=S.data.settings.monthlyIncomeTarget, thr=S.data.settings.spendAlertThreshold;
+  const limit=S.data.settings.monthlyLimit, target=S.data.settings.monthlyIncomeTarget;
   return {
     dayRatio, dayMax:1+thr,
     limitRatio: limit>0 ? monthExpense/limit : null,
@@ -514,10 +540,7 @@ function applyTheme(){
   if (full){ base=full; accent=full.accent; }
   else { base = br==='light'?STD_LIGHT:STD_DARK; accent=st.accentColor; }
   const surface2 = mixHex(base.surface, br==='light'?'#000000':'#FFFFFF', 0.06);
-  let onAccent;
-  if (st.accentTextMode==='light') onAccent='#FFFFFF';
-  else if (st.accentTextMode==='dark') onAccent='#1E2A26';
-  else onAccent=onAccentAuto(accent);
+  const onAccent = resolveOnAccent(accent, st.accentTextMode);
   const r=document.documentElement.style;
   r.setProperty('--bg', base.bg); r.setProperty('--surface', base.surface); r.setProperty('--surface2', surface2);
   r.setProperty('--divider', base.divider); r.setProperty('--text', base.text); r.setProperty('--text2', base.text2);
@@ -1091,7 +1114,7 @@ function screenAppearance(){
   for (const col of accentColors){
     const active=!isFull && st.accentColor===col;
     sw.appendChild(h('button',{class:'cdot'+(active?' sel':''), style:{width:'44px',height:'44px',background:col},
-      onclick:()=>{ const m=ACCENTS.find(a=>a.accent===col); st.themePreset=m?m.id:'custom'; st.accentColor=col; persist(); render(); }},
+      onclick:()=>{ setAccentColor(col); persist(); render(); }},
       active?h('span',{class:'ck', style:{color:onAccentAuto(col)}}, icon('check',22)):null));
   }
   accSec.appendChild(sw);
@@ -1668,41 +1691,43 @@ function csvRecords(text){
   return rows.map(r=>{ if (r.length===1 && r[0].indexOf(',')>=0){ const inner=csvRecordsSingle(r[0]); return inner[0]||r; } return r; });
 }
 function csvRecordsSingle(line){ return csvRecords(line); }
+// Чистый парсер 1Money CSV (тестируется отдельно). Бросает строку-ошибку.
+function parse1MoneyCsv(text){
+  if (text.charCodeAt(0)===0xFEFF) text=text.slice(1);
+  text=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
+  const recs=csvRecords(text).filter(r=>r.length);
+  if (!recs.length) throw 'CSV-файл пуст или не распознан.';
+  let hi=-1;
+  for (let i=0;i<recs.length;i++){ const cells=recs[i].map(normName); if (cells.some(c=>c.includes('дата')) && cells.some(c=>c.includes('тип'))){ hi=i; break; } }
+  if (hi<0) throw 'Это не похоже на выгрузку 1Money: не найдены столбцы «ДАТА» и «ТИП».';
+  const H=recs[hi].map(normName); const col={};
+  const set=(k,idx)=>{ if (col[k]==null) col[k]=idx; };
+  H.forEach((c,i)=>{ if (c.includes('дата')) set('date',i); else if (c.includes('тип')) set('type',i);
+    else if (c.includes('со сч')) set('account',i); else if (c.includes('категори')||c.includes('на сч')) set('category',i);
+    else if (c==='сумма') set('amount',i); else if (c==='валюта') set('currency',i);
+    else if (c.includes('заметк')) set('comment',i); else if (c.includes('метк')) set('tags',i); });
+  if (col.date==null||col.type==null||col.amount==null) throw 'В CSV не найдены нужные столбцы (дата / тип / сумма).';
+  const at=(r,i)=> (i==null||i<0||i>=r.length)?'':r[i];
+  const ops=[]; let rowsSkipped=0;
+  for (let i=hi+1;i<recs.length;i++){
+    const r=recs[i]; if (r.every(c=>!String(c).trim())) continue;
+    if (normName(at(r,0)).includes('название')) break; if (r.length<2) continue;
+    const ts=normName(at(r,col.type)); let type;
+    if (ts.includes('расход')) type='expense'; else if (ts.includes('доход')) type='income'; else if (ts.includes('перевод')) type='transfer'; else { rowsSkipped++; continue; }
+    const date=parseDateString(at(r,col.date)), amount=parseNumber(at(r,col.amount));
+    if (!date||amount==null||!isFinite(amount)||amount===0){ rowsSkipped++; continue; }
+    const cur=String(at(r,col.currency)).toUpperCase().trim(); const accCur=cur||'RUB';
+    const oa=accCur!=='RUB'?Math.abs(amount):null, oc=accCur!=='RUB'?accCur:null;
+    const isT=type==='transfer';
+    ops.push({ type, date, accountName:String(at(r,col.account)).trim(), toAccountName:isT?String(at(r,col.category)).trim():null,
+      categoryName:isT?'':String(at(r,col.category)).trim(), amount:Math.abs(amount), currency:accCur, originalAmount:oa, originalCurrency:oc, comment:joinComment(at(r,col.comment),at(r,col.tags))||null });
+  }
+  if (!ops.length && !rowsSkipped) throw 'В CSV не найдено операций для импорта.';
+  return { operations:ops, rowsSkipped };
+}
 async function importCsvFile(file){
-  try{
-    let text=await readFileText(file);
-    if (text.charCodeAt(0)===0xFEFF) text=text.slice(1);
-    text=text.replace(/\r\n/g,'\n').replace(/\r/g,'\n');
-    const recs=csvRecords(text).filter(r=>r.length);
-    if (!recs.length) throw 'CSV-файл пуст или не распознан.';
-    let hi=-1;
-    for (let i=0;i<recs.length;i++){ const cells=recs[i].map(normName); if (cells.some(c=>c.includes('дата')) && cells.some(c=>c.includes('тип'))){ hi=i; break; } }
-    if (hi<0) throw 'Это не похоже на выгрузку 1Money: не найдены столбцы «ДАТА» и «ТИП».';
-    const H=recs[hi].map(normName); const col={};
-    const set=(k,idx)=>{ if (col[k]==null) col[k]=idx; };
-    H.forEach((c,i)=>{ if (c.includes('дата')) set('date',i); else if (c.includes('тип')) set('type',i);
-      else if (c.includes('со сч')) set('account',i); else if (c.includes('категори')||c.includes('на сч')) set('category',i);
-      else if (c==='сумма') set('amount',i); else if (c==='валюта') set('currency',i);
-      else if (c.includes('метк')) set('tags',i); else if (c.includes('заметк')) set('comment',i); });
-    if (col.date==null||col.type==null||col.amount==null) throw 'В CSV не найдены нужные столбцы (дата / тип / сумма).';
-    const at=(r,i)=> (i==null||i<0||i>=r.length)?'':r[i];
-    const ops=[]; let rowsSkipped=0;
-    for (let i=hi+1;i<recs.length;i++){
-      const r=recs[i]; if (r.every(c=>!String(c).trim())) continue;
-      if (normName(at(r,0)).includes('название')) break; if (r.length<2) continue;
-      const ts=normName(at(r,col.type)); let type;
-      if (ts.includes('расход')) type='expense'; else if (ts.includes('доход')) type='income'; else if (ts.includes('перевод')) type='transfer'; else { rowsSkipped++; continue; }
-      const date=parseDateString(at(r,col.date)), amount=parseNumber(at(r,col.amount));
-      if (!date||amount==null||!isFinite(amount)||amount===0){ rowsSkipped++; continue; }
-      const cur=String(at(r,col.currency)).toUpperCase().trim(); const accCur=cur||'RUB';
-      const oa=accCur!=='RUB'?Math.abs(amount):null, oc=accCur!=='RUB'?accCur:null;
-      const isT=type==='transfer';
-      ops.push({ type, date, accountName:String(at(r,col.account)).trim(), toAccountName:isT?String(at(r,col.category)).trim():null,
-        categoryName:isT?'':String(at(r,col.category)).trim(), amount:Math.abs(amount), currency:accCur, originalAmount:oa, originalCurrency:oc, comment:joinComment(at(r,col.comment),at(r,col.tags))||null });
-    }
-    if (!ops.length && !rowsSkipped) throw 'В CSV не найдено операций для импорта.';
-    afterParseImport(ops, rowsSkipped, []);
-  }catch(err){ toast(typeof err==='string'?err:'Не удалось импортировать файл. Проверьте формат.', true); }
+  try{ const text=await readFileText(file); const {operations, rowsSkipped}=parse1MoneyCsv(text); afterParseImport(operations, rowsSkipped, []); }
+  catch(err){ toast(typeof err==='string'?err:'Не удалось импортировать файл. Проверьте формат.', true); }
 }
 
 /* -------- XLSX import -------- */
@@ -1964,18 +1989,22 @@ function openAllCategories(type, onPick){
 }
 
 /* ================= Уведомления (веб-аналог) ================= */
-function _dayStr(d){ return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
 function notifyAlerts(){
   try{
     if (typeof Notification==='undefined' || Notification.permission!=='granted') return;
-    const st=S.data.settings, g=gaugeData(), today=_dayStr(new Date());
-    if (st.spendAlertEnabled && g.dayRatio!=null && g.dayRatio>g.dayMax && st.lastSpendNotify!==today){
-      new Notification('Тратометр', {body:'Сегодня потрачено больше обычного на '+Math.round((g.dayRatio-1)*100)+'%'});
-      st.lastSpendNotify=today; persist();
+    const st=S.data.settings;
+    const {now, winExp, firstExp}=_expenseWindow();
+    const monStart=new Date(now.getFullYear(),now.getMonth(),1).getTime();
+    const monthExpense=S.data.transactions.filter(t=>t.type==='expense'&&t.date>=monStart).reduce((s,t)=>s+t.amount,0);
+    const sa=evaluateSpendingAlert(now, winExp, firstExp, st.lastSpendNotify?new Date(st.lastSpendNotify):null, st.spendAlertThreshold);
+    if (st.spendAlertEnabled && sa.shouldNotify && sa.percentAbove!=null){
+      new Notification('Тратометр', {body:'Сегодня потрачено больше обычного на '+Math.round(sa.percentAbove)+'%'});
+      st.lastSpendNotify=+startOfDay(now); persist();
     }
-    if (st.limitAlertEnabled && st.monthlyLimit>0 && g.monthExpense>=st.monthlyLimit && st.lastLimitNotify!==today){
+    const la=evaluateLimitAlert(now, monthExpense, st.monthlyLimit, st.lastLimitNotify?new Date(st.lastLimitNotify):null);
+    if (st.limitAlertEnabled && la.shouldNotify){
       new Notification('Тратометр', {body:'Достигнут месячный лимит трат'});
-      st.lastLimitNotify=today; persist();
+      st.lastLimitNotify=+startOfDay(now); persist();
     }
   }catch(_){}
 }
