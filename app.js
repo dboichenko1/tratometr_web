@@ -1690,10 +1690,20 @@ function parse1MoneyCsv(text){
     else if (c.includes('заметк')) set('comment',i); else if (c.includes('метк')) set('tags',i); });
   if (col.date==null||col.type==null||col.amount==null) throw 'В CSV не найдены нужные столбцы (дата / тип / сумма).';
   const at=(r,i)=> (i==null||i<0||i>=r.length)?'':r[i];
-  const ops=[]; let rowsSkipped=0;
+  const ops=[]; let rowsSkipped=0; const accountBalances={};
   for (let i=hi+1;i<recs.length;i++){
     const r=recs[i]; if (r.every(c=>!String(c).trim())) continue;
-    if (normName(at(r,0)).includes('название')) break; if (r.length<2) continue;
+    // Блок «НАЗВАНИЕ/БАЛАНС/ВАЛЮТА» 1Money — это конец операций. Запоминаем
+    // текущие остатки счетов, чтобы потом восстановить их при импорте.
+    if (normName(at(r,0)).includes('название')){
+      const BH=r.map(normName); let nC=BH.findIndex(c=>c.includes('название')), bC=BH.findIndex(c=>c.includes('баланс'));
+      if (nC<0) nC=0; if (bC<0) bC=1;
+      for (let j=i+1;j<recs.length;j++){ const br=recs[j]; if (br.every(c=>!String(c).trim())) continue;
+        const nm=String(at(br,nC)).trim(); if (!nm) continue; const bv=parseNumber(at(br,bC));
+        if (bv==null||!isFinite(bv)) continue; accountBalances[normName(nm)]={ name:nm, balance:bv }; }
+      break;
+    }
+    if (r.length<2) continue;
     const ts=normName(at(r,col.type)); let type;
     if (ts.includes('расход')) type='expense'; else if (ts.includes('доход')) type='income'; else if (ts.includes('перевод')) type='transfer'; else { rowsSkipped++; continue; }
     const date=parseDateString(at(r,col.date)), amount=parseNumber(at(r,col.amount));
@@ -1705,10 +1715,10 @@ function parse1MoneyCsv(text){
       categoryName:isT?'':String(at(r,col.category)).trim(), amount:Math.abs(amount), currency:accCur, originalAmount:oa, originalCurrency:oc, comment:joinComment(at(r,col.comment),at(r,col.tags))||null });
   }
   if (!ops.length && !rowsSkipped) throw 'В CSV не найдено операций для импорта.';
-  return { operations:ops, rowsSkipped };
+  return { operations:ops, rowsSkipped, accountBalances };
 }
 async function importCsvFile(file){
-  try{ const text=await readFileText(file); const {operations, rowsSkipped}=parse1MoneyCsv(text); afterParseImport(operations, rowsSkipped, []); }
+  try{ const text=await readFileText(file); const {operations, rowsSkipped, accountBalances}=parse1MoneyCsv(text); afterParseImport(operations, rowsSkipped, [], accountBalances); }
   catch(err){ toast(typeof err==='string'?err:'Не удалось импортировать файл. Проверьте формат.', true); }
 }
 
@@ -1754,10 +1764,10 @@ async function importXlsxFile(file){
 }
 
 /* -------- Применение импорта (период + режим) -------- */
-function afterParseImport(ops, rowsSkipped, warnings){
+function afterParseImport(ops, rowsSkipped, warnings, accountBalances){
   pickExportPeriod((range)=>{
     const filtered=ops.filter(op=>{ if (range.all) return true; const t=op.date.getTime(); return t>=range.start.getTime() && t<range.end.getTime(); });
-    const apply=(mode)=>{ const sum=applyImport(filtered, mode); sum.rowsSkipped=rowsSkipped; sum.warnings=(sum.warnings||[]).concat(warnings); showImportResult(sum); };
+    const apply=(mode)=>{ const sum=applyImport(filtered, mode, accountBalances); sum.rowsSkipped=rowsSkipped; sum.warnings=(sum.warnings||[]).concat(warnings); showImportResult(sum); };
     if (S.data.transactions.length){
       const body=h('div',{});
       const mb=(t,s,mode)=>h('button',{class:'mode-btn', onclick:()=>{ closeDialog(); apply(mode); }}, h('div',{class:'mb-t'}, t), h('div',{class:'mb-s'}, s));
@@ -1768,10 +1778,14 @@ function afterParseImport(ops, rowsSkipped, warnings){
     } else apply('add');
   }, 'Импорт операций', 'За какой период импортировать операции?');
 }
-function applyImport(ops, mode){
+function applyImport(ops, mode, accountBalances){
   const accByName={}, catByKey={};
   for (const a of S.data.accounts) accByName[normName(a.name)]=a.id;
   for (const c of S.data.categories) catByKey[c.type+'|'+normName(c.name)]=c.id;
+  // Снимок «до импорта»: какие счета уже были и были ли у них операции — чтобы
+  // безопасно восстановить остатки только у новых/пустых счетов (см. ниже).
+  const existedBefore=new Set(S.data.accounts.map(a=>a.id));
+  const txCountBefore={}; for (const t of S.data.transactions) txCountBefore[t.accountId]=(txCountBefore[t.accountId]||0)+1;
   const createdAccounts=[], createdCategories=[]; let cursor=S.data.accounts.length+S.data.categories.length;
   const palColor=()=>PALETTE[(cursor++)%PALETTE.length];
   const resolveAccount=(raw)=>{ const name=(raw||'').trim()||'Импорт'; const k=normName(name); if (accByName[k]!=null) return accByName[k];
@@ -1797,9 +1811,25 @@ function applyImport(ops, mode){
     const uniq=[]; for (const r of records){ const k=key(r); if ((counts[k]||0)>0){ counts[k]--; duplicatesSkipped++; continue; } uniq.push(r); } toInsert=uniq;
   }
   for (const r of toInsert){ r.id=newId(); r.createdAt=Date.now(); S.data.transactions.push(r); }
+  // Восстанавливаем остатки из 1Money (блок «БАЛАНС»): выставляем стартовый
+  // остаток так, чтобы итоговый баланс счёта совпал с тем, что показывал 1Money.
+  // Делаем это только для новых и пустых счетов, а в режиме «Заменить всё» — для
+  // всех счетов из файла (прежние операции стёрты, источник истины — выгрузка).
+  // Счета с уже введёнными данными не трогаем, чтобы не затереть их.
+  let balancesRestored=0;
+  if (accountBalances){
+    const netNow=netByAccount();
+    for (const k in accountBalances){
+      const acc=S.data.accounts.find(a=>normName(a.name)===k); if (!acc) continue;
+      const isNew=!existedBefore.has(acc.id);
+      const wasEmpty=(txCountBefore[acc.id]||0)===0 && !acc.initialBalance;
+      if (!(isNew || wasEmpty || mode==='replace')) continue;
+      acc.initialBalance=Math.round((accountBalances[k].balance-(netNow[acc.id]||0))*100)/100; balancesRestored++;
+    }
+  }
   materializeRecurring(); persist(); resetFilters(); render();
   return { imported:toInsert.length, importedTransfers:toInsert.filter(r=>r.type==='transfer').length, droppedTransfers,
-    deletedExisting, duplicatesSkipped, createdAccounts, createdCategories };
+    deletedExisting, duplicatesSkipped, createdAccounts, createdCategories, balancesRestored };
 }
 function showImportResult(s){
   const lines=[]; const plural=(n)=>{ const a=n%10,b=n%100; return (a===1&&b!==11)?'операция':((a>=2&&a<=4&&(b<10||b>=20))?'операции':'операций'); };
@@ -1809,6 +1839,7 @@ function showImportResult(s){
   if (s.deletedExisting) lines.push('Удалено прежних операций: '+s.deletedExisting+'.');
   if (s.duplicatesSkipped) lines.push('Пропущено дублей: '+s.duplicatesSkipped+'.');
   if (s.createdAccounts && s.createdAccounts.length) lines.push('Новые счета: '+s.createdAccounts.join(', ')+'.');
+  if (s.balancesRestored) lines.push('Остатки счетов восстановлены из 1Money: '+s.balancesRestored+'.');
   if (s.createdCategories && s.createdCategories.length) lines.push('Новые категории: '+s.createdCategories.join(', ')+'.');
   if (s.rowsSkipped) lines.push('Строк пропущено (нет даты/суммы): '+s.rowsSkipped+'.');
   (s.warnings||[]).forEach(w=>lines.push(w));
