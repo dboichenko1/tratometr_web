@@ -4,7 +4,7 @@
    для обновления версии. Все пути относительные — работает и из корня
    домена, и из подпапки project-страницы GitHub Pages. */
 
-const VERSION = 'tratometr-v1';
+const VERSION = 'tratometr-v2';
 
 // Файлы оболочки. Относительно расположения sw.js (корень scope).
 const SHELL = [
@@ -12,6 +12,7 @@ const SHELL = [
   './index.html',
   './app.css',
   './app.js',
+  './xlsx.js',
   './manifest.webmanifest',
   './icons/icon-192.png',
   './icons/icon-512.png',
