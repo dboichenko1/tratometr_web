@@ -24,7 +24,6 @@ t.eq('сид: 5 доходных', seed.categories.filter(c=>c.type==='income').
 t.eq('дефолт тема — тёмная', seed.settings.themeMode, 'dark');
 t.eq('дефолт навигация — нижняя', seed.settings.navStyle, 'bottom');
 t.eq('дефолт текст на акценте — авто', seed.settings.accentTextMode, 'auto');
-t.eq('дефолт звук — выкл', seed.settings.replenishSound, false);
 t.eq('дефолт пресет — green', seed.settings.themePreset, 'green');
 
 // mainAccount находит «Основной» независимо от порядка

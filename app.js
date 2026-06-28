@@ -263,7 +263,7 @@ function seedData(){
       themeMode:'dark', accentColor:'#2E7D67', themePreset:'green',
       fontFamily:null, accentTextMode:'auto', uiScale:1.0,
       monthlyLimit:0, monthlyIncomeTarget:0, spendAlertThreshold:0.30,
-      headerGauges:['day','limit'], replenishSound:false, navStyle:'bottom',
+      headerGauges:['day','limit'], navStyle:'bottom',
       spendAlertEnabled:false, limitAlertEnabled:false, lockEnabled:false, lockHash:null,
     },
   };
@@ -471,17 +471,6 @@ function toast(msg, isErr){
   setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(),300); }, 2400);
 }
 
-// Звук «Больше золота» — ТОЛЬКО при добавлении дохода (и разово при включении
-// тумблера, для проверки). Проигрывается прямо в момент тапа «Добавить» — этого
-// пользовательского жеста достаточно для iOS. Отдельную «разблокировку» по
-// касанию экрана убрали: из-за неё звук срабатывал не к месту.
-let _replAudio=null;
-function _ensureAudio(){ if(!_replAudio){ try{ _replAudio=new Audio('sound/more_gold.mp3'); _replAudio.preload='auto'; _replAudio.setAttribute('playsinline',''); }catch(_){ } } return _replAudio; }
-function playReplenish(){
-  if (!S.data.settings.replenishSound) return;
-  const a=_ensureAudio(); if(!a) return;
-  try{ a.currentTime=0; const p=a.play(); if(p&&p.then) p.catch(()=>{}); }catch(_){}
-}
 // Свайп/тап по форме убирает клавиатуру (как в нативе).
 function dismissKeyboard(){ const a=document.activeElement; if (a && (a.tagName==='INPUT'||a.tagName==='TEXTAREA')){ try{ a.blur(); }catch(_){} } }
 
@@ -1158,12 +1147,6 @@ function screenAppearance(){
   }
   inner.appendChild(navSec);
 
-  // Звук
-  const soundSec=h('div',{class:'section'}); soundSec.appendChild(h('div',{class:'section-title'},'Звук'));
-  soundSec.appendChild(h('div',{style:{padding:'4px 16px'}},
-    switchRow('Звук «Больше золота» при доходе', st.replenishSound, (on)=>{ st.replenishSound=on; persist(); if(on) playReplenish(); })));
-  inner.appendChild(soundSec);
-
   body.appendChild(inner); return {bar, body};
 }
 function cardStyle(active, accent, bg){ return {flex:'0 0 auto',width:'92px',minHeight:'88px',borderRadius:'14px',padding:'10px',
@@ -1476,8 +1459,7 @@ function saveTransaction(f, isEdit, editing){
   if (isEdit){ const i=S.data.transactions.findIndex(t=>t.id===editing.id); if (i>=0) S.data.transactions[i]=Object.assign({}, editing, rec); toast('Сохранено'); }
   else {
     rec.id=newId(); rec.createdAt=Date.now(); S.data.transactions.push(rec);
-    if (f.type==='income') playReplenish();
-    else if (f.type==='expense') notifyAlerts();
+    if (f.type==='expense') notifyAlerts();
     if (f.regular && f.type!=='transfer'){
       const anchorDay=f.date.getDate();
       S.data.recurring.push({ id:newId(), type:f.type, amount:rub, accountId:f.accountId, categoryId:f.categoryId,
