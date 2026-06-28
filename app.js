@@ -445,11 +445,22 @@ function toast(msg, isErr){
   setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(),300); }, 2400);
 }
 
-// Звук «Больше золота» при доходе (по тапу «Добавить» — проходит iOS-autoplay).
-let _replAudio=null;
+// Звук «Больше золота» при доходе. iOS требует разблокировку аудио первым
+// касанием экрана, затем воспроизведение по тапу «Добавить».
+let _replAudio=null, _audioUnlocked=false;
+function _ensureAudio(){ if(!_replAudio){ try{ _replAudio=new Audio('sound/more_gold.mp3'); _replAudio.preload='auto'; _replAudio.setAttribute('playsinline',''); }catch(_){ } } return _replAudio; }
+function unlockAudio(){ if(_audioUnlocked) return; const a=_ensureAudio(); if(!a) return;
+  try{ a.muted=true; const p=a.play(); if(p&&p.then) p.then(()=>{ a.pause(); a.currentTime=0; a.muted=false; _audioUnlocked=true; }).catch(()=>{}); }catch(_){} }
 function playReplenish(){
   if (!S.data.settings.replenishSound) return;
-  try{ if(!_replAudio){ _replAudio=new Audio('sound/more_gold.mp3'); _replAudio.preload='auto'; } _replAudio.currentTime=0; _replAudio.play().catch(()=>{}); }catch(_){}
+  const a=_ensureAudio(); if(!a) return;
+  try{ a.muted=false; a.currentTime=0; const p=a.play(); if(p&&p.then) p.catch(()=>{}); }catch(_){}
+}
+// Свайп/тап по форме убирает клавиатуру (как в нативе).
+function dismissKeyboard(){ const a=document.activeElement; if (a && (a.tagName==='INPUT'||a.tagName==='TEXTAREA')){ try{ a.blur(); }catch(_){} } }
+if (typeof document!=='undefined' && document.addEventListener){
+  document.addEventListener('touchend', unlockAudio, true);
+  document.addEventListener('mousedown', unlockAudio, true);
 }
 
 /* -------------------------------------------------- Навигация: боковое меню -- */
@@ -684,7 +695,7 @@ function screenDashboard(){
     right: useDrawer()?null:abBtn('menu',()=>navigate('more')),
     bottom:uTabs([['expense','Расходы'],['income','Доходы']], S.ui.activeType, v=>{ S.ui.activeType=v; render(); }) });
   const body=h('main',{class:'screen'});
-  const inner=h('div',{class:'screen-pad'});
+  const inner=h('div',{class:'screen-pad with-fab'});
   inner.appendChild(h('div',{class:'gap12'}));
   inner.appendChild(periodChips());
 
@@ -728,7 +739,7 @@ function screenTransactions(){
   const bar=appbar({ left: useDrawer()?abBtn('menu',openDrawer):null, titleEl:accountTitleEl(),
     bottom:uTabs([['expense','Расходы'],['income','Доходы'],['transfer','Переводы']], S.ui.txTab, v=>{ S.ui.txTab=v; render(); }) });
   const body=h('main',{class:'screen'});
-  const inner=h('div',{class:'screen-pad'});
+  const inner=h('div',{class:'screen-pad with-fab'});
   inner.appendChild(h('div',{class:'gap12'}));
   inner.appendChild(periodChips());
   inner.appendChild(periodNav());
@@ -1199,6 +1210,8 @@ function openSheet({title, full, body, footer, action}){
   if (action) head.appendChild(action);
   sheet.appendChild(head);
   const sb=h('div',{class:'sheet-body'}); sb.appendChild(body); sheet.appendChild(sb);
+  sb.addEventListener('touchmove', dismissKeyboard, {passive:true});
+  sb.addEventListener('pointerdown', (e)=>{ if (!e.target.closest('input,textarea,select,button,label,a')) dismissKeyboard(); });
   if (footer) sheet.appendChild(footer);
   scrim.appendChild(sheet); document.body.appendChild(scrim);
   requestAnimationFrame(()=>scrim.classList.add('show'));
@@ -1213,6 +1226,8 @@ function openSubSheet(title, body, footer){
   sheet.appendChild(h('div',{class:'grab'}));
   sheet.appendChild(h('div',{class:'sheet-head'}, h('button',{class:'ab-btn', onclick:closeSubSheet}, icon('chevL',24)), h('div',{class:'sh-title'}, title)));
   const sb=h('div',{class:'sheet-body'}); sb.appendChild(body); sheet.appendChild(sb);
+  sb.addEventListener('touchmove', dismissKeyboard, {passive:true});
+  sb.addEventListener('pointerdown', (e)=>{ if (!e.target.closest('input,textarea,select,button,label,a')) dismissKeyboard(); });
   if (footer) sheet.appendChild(footer);
   scrim.appendChild(sheet); document.body.appendChild(scrim);
   requestAnimationFrame(()=>scrim.classList.add('show'));
