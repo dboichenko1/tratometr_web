@@ -445,23 +445,19 @@ function toast(msg, isErr){
   setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(),300); }, 2400);
 }
 
-// Звук «Больше золота» при доходе. iOS требует разблокировку аудио первым
-// касанием экрана, затем воспроизведение по тапу «Добавить».
-let _replAudio=null, _audioUnlocked=false;
+// Звук «Больше золота» — ТОЛЬКО при добавлении дохода (и разово при включении
+// тумблера, для проверки). Проигрывается прямо в момент тапа «Добавить» — этого
+// пользовательского жеста достаточно для iOS. Отдельную «разблокировку» по
+// касанию экрана убрали: из-за неё звук срабатывал не к месту.
+let _replAudio=null;
 function _ensureAudio(){ if(!_replAudio){ try{ _replAudio=new Audio('sound/more_gold.mp3'); _replAudio.preload='auto'; _replAudio.setAttribute('playsinline',''); }catch(_){ } } return _replAudio; }
-function unlockAudio(){ if(_audioUnlocked) return; const a=_ensureAudio(); if(!a) return;
-  try{ a.muted=true; const p=a.play(); if(p&&p.then) p.then(()=>{ a.pause(); a.currentTime=0; a.muted=false; _audioUnlocked=true; }).catch(()=>{}); }catch(_){} }
 function playReplenish(){
   if (!S.data.settings.replenishSound) return;
   const a=_ensureAudio(); if(!a) return;
-  try{ a.muted=false; a.currentTime=0; const p=a.play(); if(p&&p.then) p.catch(()=>{}); }catch(_){}
+  try{ a.currentTime=0; const p=a.play(); if(p&&p.then) p.catch(()=>{}); }catch(_){}
 }
 // Свайп/тап по форме убирает клавиатуру (как в нативе).
 function dismissKeyboard(){ const a=document.activeElement; if (a && (a.tagName==='INPUT'||a.tagName==='TEXTAREA')){ try{ a.blur(); }catch(_){} } }
-if (typeof document!=='undefined' && document.addEventListener){
-  document.addEventListener('touchend', unlockAudio, true);
-  document.addEventListener('mousedown', unlockAudio, true);
-}
 
 /* -------------------------------------------------- Навигация: боковое меню -- */
 function useDrawer(){ return S.data.settings.navStyle==='drawer'; }
