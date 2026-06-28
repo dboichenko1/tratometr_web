@@ -32,15 +32,18 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+html { height: 100%; }
 html, body {
-  margin: 0; padding: 0; height: 100%;
+  margin: 0; padding: 0;
   background: var(--bg); color: var(--text);
   font-family: var(--font);
   font-size: calc(16px * var(--scale));
   -webkit-text-size-adjust: 100%;
   overscroll-behavior-y: none;
 }
-body { overflow: hidden; }
+/* Пришпиливаем корень к вьюпорту — иначе на iOS standalone height:100% не
+   дотягивается до низа экрана и снизу остаётся пустая полоса. */
+body { position: fixed; inset: 0; overflow: hidden; }
 button { font-family: inherit; color: inherit; cursor: pointer; background: none; border: 0; }
 input, textarea, select { font-family: inherit; font-size: 1rem; color: var(--text); }
 ::selection { background: var(--accent); color: var(--on-accent); }
