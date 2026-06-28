@@ -379,3 +379,36 @@ a { color: var(--accent); }
 .app { overflow-x: hidden; }
 .brk-name, .tx-mid, .lt-mid, .ab-mid, .acct-title, .h-total { min-width: 0; }
 .brk-name, .h-total { overflow: hidden; text-overflow: ellipsis; }
+
+/* Боковое меню (drawer) */
+.drawer-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.5); z-index: 90; opacity: 0; transition: opacity .2s; }
+.drawer-scrim.show { opacity: 1; }
+.drawer { position: absolute; left: 0; top: 0; bottom: 0; width: 84%; max-width: 320px; background: var(--bg);
+  overflow-y: auto; -webkit-overflow-scrolling: touch; padding-bottom: var(--safe-bottom);
+  transform: translateX(-100%); transition: transform .24s cubic-bezier(.2,.7,.3,1); box-shadow: 2px 0 16px rgba(0,0,0,.4); }
+.drawer-scrim.show .drawer { transform: translateX(0); }
+.drawer .lt.dactive .lt-title { color: var(--accent); font-weight: 600; }
+.drawer .lt.dactive .lt-lead { color: var(--accent); }
+
+/* Сворачивание пончика при прокрутке */
+.donut-card { position: sticky; top: 0; z-index: 5; }
+.donut-collapsed { display: none; padding: 4px 6px 8px; }
+.donut-card.collapsed .donut-wrap { display: none; }
+.donut-card.collapsed .donut-collapsed { display: block; }
+.segbar { display: flex; height: 14px; border-radius: 7px; overflow: hidden; background: var(--surface2); }
+.segbar > span { height: 100%; }
+.dc-total { text-align: center; font-size: 1.25rem; font-weight: 700; margin-top: 8px; }
+
+/* Экран блокировки / ввод PIN */
+.lock-screen { position: fixed; inset: 0; z-index: 300; background: var(--bg); display: flex; flex-direction: column;
+  align-items: center; justify-content: center; gap: 18px; padding: 24px; }
+.lock-screen.shake { animation: shakex .42s; }
+@keyframes shakex { 0%,100%{transform:translateX(0)} 20%,60%{transform:translateX(-9px)} 40%,80%{transform:translateX(9px)} }
+.lock-title { font-weight: 600; }
+.lock-dots { display: flex; gap: 14px; }
+.lock-dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid var(--text2); }
+.lock-dot.on { background: var(--accent); border-color: var(--accent); }
+.lock-pad { display: grid; grid-template-columns: repeat(3, 70px); gap: 16px; margin-top: 8px; }
+.lock-key { height: 70px; border-radius: 50%; background: var(--surface); font-size: 1.5rem; font-weight: 600;
+  display: flex; align-items: center; justify-content: center; }
+.lock-key:active { background: var(--surface2); }

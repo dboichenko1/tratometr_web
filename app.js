@@ -34,6 +34,9 @@ const ICONS = {
   home:'<path d="M4 11.5 12 4l8 7.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/><path d="M6 10v10h12V10" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/>',
   list:'<path d="M4 6h16M4 12h16M4 18h11" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/>',
   bars:'<rect x="4" y="12" width="4" height="8" rx="1" fill="currentColor"/><rect x="10" y="5" width="4" height="15" rx="1" fill="currentColor"/><rect x="16" y="9" width="4" height="11" rx="1" fill="currentColor"/>',
+  pie:'<circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 12V3.5M12 12l7.5 4" stroke="currentColor" stroke-width="2"/>',
+  lock:'<rect x="5" y="11" width="14" height="9" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3" fill="none" stroke="currentColor" stroke-width="2"/>',
+  bell:'<path d="M6 16V11a6 6 0 0 1 12 0v5l2 2H4z" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/><path d="M10 20a2 2 0 0 0 4 0" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
   menu:'<path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>',
   chevL:'<path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
   chevR:'<path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/>',
@@ -255,7 +258,8 @@ function seedData(){
       themeMode:'dark', accentColor:'#2E7D67', themePreset:'green',
       fontFamily:null, accentTextMode:'auto', uiScale:1.0,
       monthlyLimit:0, monthlyIncomeTarget:0, spendAlertThreshold:0.30,
-      headerGauges:['day','limit'],
+      headerGauges:['day','limit'], replenishSound:false, navStyle:'bottom',
+      spendAlertEnabled:false, limitAlertEnabled:false, lockEnabled:false, lockHash:null,
     },
   };
 }
@@ -441,6 +445,52 @@ function toast(msg, isErr){
   setTimeout(()=>{ t.style.opacity='0'; t.style.transition='opacity .3s'; setTimeout(()=>t.remove(),300); }, 2400);
 }
 
+// Звук «Больше золота» при доходе (по тапу «Добавить» — проходит iOS-autoplay).
+let _replAudio=null;
+function playReplenish(){
+  if (!S.data.settings.replenishSound) return;
+  try{ if(!_replAudio){ _replAudio=new Audio('sound/more_gold.mp3'); _replAudio.preload='auto'; } _replAudio.currentTime=0; _replAudio.play().catch(()=>{}); }catch(_){}
+}
+
+/* -------------------------------------------------- Навигация: боковое меню -- */
+function useDrawer(){ return S.data.settings.navStyle==='drawer'; }
+let _drawerCloser=null;
+function closeDrawer(){ if(_drawerCloser) _drawerCloser(); }
+function openDrawer(){
+  const g=gaugeData(), net=netByAccount();
+  const panel=h('div',{class:'drawer'});
+  const head=h('div',{class:'hub-head', style:{borderRadius:'0'}});
+  const sel=S.data.settings.headerGauges, order=['day','limit','income_day','income_target','balance'];
+  const shown=order.filter(k=>sel.includes(k)).map(k=>gaugeColForKey(k,g)).filter(Boolean);
+  if (shown.length) head.appendChild(h('div',{class:'hub-gauges'}, shown));
+  head.appendChild(h('div',{class:'hub-balance'}, 'Остаток: '+money(totalBalance(net))));
+  panel.appendChild(head);
+  const cur=S.ui.screen;
+  const go=(scr)=>{ closeDrawer(); navigate(scr); };
+  const item=(scr,ic,title)=>h('button',{class:'lt'+(cur===scr?' dactive':''), onclick:()=>go(scr)},
+    h('span',{class:'lt-lead'}, icon(ic,24)), h('div',{class:'lt-mid'}, h('div',{class:'lt-title'}, title)));
+  const dv=()=>h('div',{style:{height:'1px',background:'var(--divider)',margin:'8px 16px'}});
+  panel.appendChild(item('dashboard','home','Главная'));
+  panel.appendChild(item('transactions','list','Операции'));
+  panel.appendChild(item('analysis','bars','Графики'));
+  panel.appendChild(dv());
+  panel.appendChild(item('accounts','wallet','Счета'));
+  panel.appendChild(item('categories','category','Категории'));
+  panel.appendChild(item('limits','speed','Спидометры'));
+  panel.appendChild(item('recurring','repeat','Регулярные операции'));
+  panel.appendChild(item('appearance','palette','Оформление'));
+  panel.appendChild(item('security','lock','Безопасность'));
+  panel.appendChild(item('notifications','bell','Уведомления'));
+  panel.appendChild(dv());
+  panel.appendChild(item('io','io','Импорт и экспорт'));
+  panel.appendChild(h('button',{class:'lt', onclick:()=>{ closeDrawer(); openAbout(); }},
+    h('span',{class:'lt-lead'}, icon('info',24)), h('div',{class:'lt-mid'}, h('div',{class:'lt-title'},'О приложении'))));
+  const scrim=h('div',{class:'drawer-scrim', onclick:(e)=>{ if(e.target===scrim) closeDrawer(); }}, panel);
+  document.body.appendChild(scrim);
+  requestAnimationFrame(()=>scrim.classList.add('show'));
+  _drawerCloser=()=>{ scrim.remove(); _drawerCloser=null; };
+}
+
 /* -------------------------------------------------- Тема -------------------- */
 function effectiveBrightness(){
   const st=S.data.settings;
@@ -559,13 +609,13 @@ function render(){
   const screen=S.ui.screen;
   const map={ dashboard:screenDashboard, transactions:screenTransactions, analysis:screenAnalysis, more:screenMore,
     accounts:screenAccounts, categories:screenCategories, limits:screenLimits, appearance:screenAppearance,
-    recurring:screenRecurring, io:screenIO };
+    recurring:screenRecurring, io:screenIO, notifications:screenNotifications, security:screenSecurity };
   const view=(map[screen]||screenDashboard)();
   const app=h('div',{class:'app'});
   if (view.bar) app.appendChild(view.bar);
   app.appendChild(view.body);
   if (TOP_TABS.has(screen)){
-    app.appendChild(bottomNav(screen));
+    if (!useDrawer()) app.appendChild(bottomNav(screen));
     if (screen==='dashboard'||screen==='transactions')
       app.appendChild(h('button',{class:'fab', 'aria-label':'Добавить', onclick:()=>openAddSheet(null)}, icon('add',30)));
   }
@@ -589,7 +639,7 @@ function appbar(opts){
   return bar;
 }
 function abBtn(name, onclick, color){ return h('button',{class:'ab-btn', style:color?{color}:null, onclick}, icon(name,24)); }
-function backBtn(to){ return abBtn('back', ()=>navigate(to||'more')); }
+function backBtn(to){ return abBtn('back', ()=>navigate(useDrawer()?'dashboard':(to||'more'))); }
 
 /* Заголовок-селектор счёта (имя + баланс) для дашборда/операций/анализа. */
 function accountTitleEl(){
@@ -630,8 +680,8 @@ function emptyState(ic, title, sub){
 
 /* ================= ЭКРАН: Главная ================= */
 function screenDashboard(){
-  const bar=appbar({ titleEl:accountTitleEl(),
-    right:abBtn('menu',()=>navigate('more')),
+  const bar=appbar({ left: useDrawer()?abBtn('menu',openDrawer):null, titleEl:accountTitleEl(),
+    right: useDrawer()?null:abBtn('menu',()=>navigate('more')),
     bottom:uTabs([['expense','Расходы'],['income','Доходы']], S.ui.activeType, v=>{ S.ui.activeType=v; render(); }) });
   const body=h('main',{class:'screen'});
   const inner=h('div',{class:'screen-pad'});
@@ -640,16 +690,18 @@ function screenDashboard(){
 
   const slice=currentSlice(); const total=slice.reduce((s,t)=>s+t.amount,0); const items=breakdown(slice);
   const card=h('div',{class:'card donut-card'});
-  // период встроен в карточку
-  card.appendChild((()=>{ const p=periodNav('donut-period'); return p; })());
+  card.appendChild(periodNav('donut-period'));
   if (!items.length){
-    card.appendChild(h('div',{class:'donut-wrap'}, h('div',{class:'donut', style:{width:'196px',height:'196px'}, html:donutSVG([],196)}, )));
-    const dn=card.querySelector('.donut'); dn.appendChild(h('div',{class:'dcenter'}, h('div',{class:'dnote'},'нет операций')));
+    const dn=h('div',{class:'donut', style:{width:'196px',height:'196px'}, html:donutSVG([],196)});
+    dn.appendChild(h('div',{class:'dcenter'}, h('div',{class:'dnote'},'нет операций')));
+    card.appendChild(h('div',{class:'donut-wrap'}, dn));
   } else {
-    const dwrap=h('div',{class:'donut-wrap'});
     const dn=h('div',{class:'donut', style:{width:'196px',height:'196px'}, html:donutSVG(items,196)});
     dn.appendChild(h('div',{class:'dcenter'}, h('div',{class:'dtotal'}, money(total))));
-    dwrap.appendChild(dn); card.appendChild(dwrap);
+    card.appendChild(h('div',{class:'donut-wrap'}, dn));
+    // свёрнутый вид при прокрутке: горизонтальная полоса-разбивка + итог
+    card.appendChild(h('div',{class:'donut-collapsed'}, segmentBar(items), h('div',{class:'dc-total'}, money(total))));
+    body.addEventListener('scroll', ()=>{ card.classList.toggle('collapsed', body.scrollTop>70); });
   }
   inner.appendChild(card);
 
@@ -673,7 +725,7 @@ function screenDashboard(){
 const SORTS=[['dateDesc','По дате (новые)','Новые'],['dateAsc','По дате (старые)','Старые'],['amountDesc','По сумме (больше)','Больше'],['amountAsc','По сумме (меньше)','Меньше']];
 function sortShort(){ return (SORTS.find(s=>s[0]===S.ui.sort)||SORTS[0])[2]; }
 function screenTransactions(){
-  const bar=appbar({ titleEl:accountTitleEl(),
+  const bar=appbar({ left: useDrawer()?abBtn('menu',openDrawer):null, titleEl:accountTitleEl(),
     bottom:uTabs([['expense','Расходы'],['income','Доходы'],['transfer','Переводы']], S.ui.txTab, v=>{ S.ui.txTab=v; render(); }) });
   const body=h('main',{class:'screen'});
   const inner=h('div',{class:'screen-pad'});
@@ -739,7 +791,7 @@ function openSortMenu(){
 
 /* ================= ЭКРАН: Анализ ================= */
 function screenAnalysis(){
-  const bar=appbar({ title:'Анализ',
+  const bar=appbar({ left: useDrawer()?abBtn('menu',openDrawer):null, title:'Анализ',
     bottom:uTabs([['expense','Расходы'],['income','Доходы'],['total','Общий']], S.ui.analysisMode, v=>{ S.ui.analysisMode=v; render(); }) });
   const body=h('main',{class:'screen'});
   const inner=h('div',{class:'screen-pad'});
@@ -759,31 +811,53 @@ function screenAnalysis(){
       if (t.type==='expense') exp+=t.amount; else if (t.type==='income') inc+=t.amount; }
     buckets.push({exp,inc,label:bucketLabel(gran,a)});
   }
-  const maxV=Math.max(1,...buckets.map(b=>combined?Math.max(b.exp,b.inc):(S.ui.analysisMode==='income'?b.inc:b.exp)));
-  const chartCard=h('div',{class:'card'});
-  chartCard.appendChild(h('div',{style:{fontSize:'1rem',fontWeight:'700',marginBottom:'12px'}},'Динамика'));
-  const bars=h('div',{class:'bars'});
-  for (const b of buckets){
-    const grp=h('div',{class:'bar-grp'});
-    if (combined){ grp.appendChild(h('div',{class:'bar inc', style:{height:(b.inc/maxV*100)+'%'}})); grp.appendChild(h('div',{class:'bar exp', style:{height:(b.exp/maxV*100)+'%'}})); }
-    else { const v=S.ui.analysisMode==='income'?b.inc:b.exp; grp.appendChild(h('div',{class:'bar '+(S.ui.analysisMode==='income'?'inc':'exp'), style:{height:(v/maxV*100)+'%'}})); }
-    bars.appendChild(h('div',{class:'bar-col'}, grp, h('div',{class:'bar-lbl'}, b.label)));
-  }
-  chartCard.appendChild(bars);
-  if (combined) chartCard.appendChild(h('div',{class:'legend'},
-    h('span',{class:'lg'}, h('span',{class:'dot', style:{background:'var(--income)'}}), 'Доходы'),
-    h('span',{class:'lg'}, h('span',{class:'dot', style:{background:'var(--expense)'}}), 'Расходы')));
-  inner.appendChild(chartCard);
-
   const r=rangeFor(S.ui.periodType,S.ui.anchor,S.ui.customRange);
   let pExp=0,pInc=0;
   for (const t of S.data.transactions){ if (acc!=null&&t.accountId!==acc) continue; if(!inRange(t,r)) continue;
     if (t.type==='expense') pExp+=t.amount; else if (t.type==='income') pInc+=t.amount; }
+  const periodMode=S.ui.analysisMode==='income'?'income':'expense';
+  const periodItems=breakdown(S.data.transactions.filter(t=>t.type===periodMode && (acc==null||t.accountId===acc) && inRange(t,r)));
+
+  const maxV=Math.max(1,...buckets.map(b=>combined?Math.max(b.exp,b.inc):(S.ui.analysisMode==='income'?b.inc:b.exp)));
+  const isPie=S.ui.chartType==='pie';
+  const chartCard=h('div',{class:'card'});
+  const toggle=h('div',{class:'toggle-seg'},
+    h('button',{class:isPie?'':'active', onclick:()=>{ S.ui.chartType='bars'; render(); }}, icon('bars',18)),
+    h('button',{class:isPie?'active':'', onclick:()=>{ S.ui.chartType='pie'; render(); }}, icon('pie',18)));
+  const ttl=isPie?(combined?'Доходы и расходы':'Распределение за период'):'Динамика';
+  chartCard.appendChild(h('div',{style:{display:'flex',alignItems:'center',marginBottom:'12px'}},
+    h('div',{style:{flex:'1',fontSize:'1rem',fontWeight:'700'}}, ttl), toggle));
+  const legend=()=>h('div',{class:'legend'},
+    h('span',{class:'lg'}, h('span',{class:'dot', style:{background:'var(--income)'}}), 'Доходы'),
+    h('span',{class:'lg'}, h('span',{class:'dot', style:{background:'var(--expense)'}}), 'Расходы'));
+  if (!isPie){
+    const bars=h('div',{class:'bars'});
+    for (const b of buckets){
+      const grp=h('div',{class:'bar-grp'});
+      if (combined){ grp.appendChild(h('div',{class:'bar inc', style:{height:(b.inc/maxV*100)+'%'}})); grp.appendChild(h('div',{class:'bar exp', style:{height:(b.exp/maxV*100)+'%'}})); }
+      else { const v=S.ui.analysisMode==='income'?b.inc:b.exp; grp.appendChild(h('div',{class:'bar '+(S.ui.analysisMode==='income'?'inc':'exp'), style:{height:(v/maxV*100)+'%'}})); }
+      bars.appendChild(h('div',{class:'bar-col'}, grp, h('div',{class:'bar-lbl'}, b.label)));
+    }
+    chartCard.appendChild(bars);
+    if (combined) chartCard.appendChild(legend());
+  } else if (combined){
+    const bal=pInc-pExp, tot=Math.max(1,pInc+pExp);
+    const segs=[]; if (pInc>0) segs.push({category:{color:'#3DAE6B'}, fraction:pInc/tot, total:pInc}); if (pExp>0) segs.push({category:{color:'#E5564E'}, fraction:pExp/tot, total:pExp});
+    const dn=h('div',{class:'donut', style:{width:'200px',height:'200px'}, html:donutSVG(segs,200)});
+    dn.appendChild(h('div',{class:'dcenter'}, h('div',{class:'dtotal', style:{color:bal>=0?'var(--income)':'var(--expense)'}}, money(bal)), h('div',{class:'dnote'},'баланс')));
+    chartCard.appendChild(h('div',{class:'donut-wrap'}, dn));
+    chartCard.appendChild(legend());
+  } else {
+    if (!periodItems.length) chartCard.appendChild(h('div',{class:'muted', style:{textAlign:'center',padding:'24px'}},'Нет операций за выбранный период'));
+    else { const tot=periodItems.reduce((s,i)=>s+i.total,0);
+      const dn=h('div',{class:'donut', style:{width:'200px',height:'200px'}, html:donutSVG(periodItems,200)});
+      dn.appendChild(h('div',{class:'dcenter'}, h('div',{class:'dtotal'}, money(tot))));
+      chartCard.appendChild(h('div',{class:'donut-wrap'}, dn)); }
+  }
+  inner.appendChild(chartCard);
 
   if (!combined){
-    const mode=S.ui.analysisMode==='income'?'income':'expense';
-    const slice=S.data.transactions.filter(t=>t.type===mode && (acc==null||t.accountId===acc) && inRange(t,r));
-    const items=breakdown(slice);
+    const items=periodItems;
     const bc=h('div',{class:'card'});
     bc.appendChild(h('div',{style:{fontSize:'1rem',fontWeight:'700',marginBottom:'12px'}},'По категориям за период'));
     if (!items.length) bc.appendChild(h('div',{class:'muted'},'Нет операций за период'));
@@ -847,6 +921,8 @@ function screenMore(){
   wrap.appendChild(sec('categories','category','Категории'));
   wrap.appendChild(dv());
   wrap.appendChild(sec('appearance','palette','Оформление'));
+  wrap.appendChild(sec('security','lock','Безопасность'));
+  wrap.appendChild(sec('notifications','bell','Уведомления'));
   wrap.appendChild(sec('limits','speed','Спидометры'));
   wrap.appendChild(sec('recurring','repeat','Регулярные операции'));
   wrap.appendChild(dv());
@@ -1042,6 +1118,21 @@ function screenAppearance(){
   scale.addEventListener('change',()=>{ st.uiScale=parseFloat(scale.value); persist(); render(); });
   scaleSec.appendChild(scaleLabel); scaleSec.appendChild(h('div',{style:{padding:'0 16px 8px'}}, scale));
   inner.appendChild(scaleSec);
+
+  // Навигация: где показывать меню
+  const navSec=h('div',{class:'section'}); navSec.appendChild(h('div',{class:'section-title'},'Навигация'));
+  for (const [v,l,s] of [['bottom','Нижняя панель','Разделы внизу экрана + кнопка «Ещё»'],['drawer','Боковое меню','Кнопка-гамбургер слева открывает меню']]){
+    navSec.appendChild(h('button',{class:'lt', onclick:()=>{ st.navStyle=v; persist(); render(); }},
+      h('div',{class:'lt-mid'}, h('div',{class:'lt-title'}, l), h('div',{class:'lt-sub'}, s)),
+      st.navStyle===v?h('span',{class:'lt-check'}, icon('check',22)):null));
+  }
+  inner.appendChild(navSec);
+
+  // Звук
+  const soundSec=h('div',{class:'section'}); soundSec.appendChild(h('div',{class:'section-title'},'Звук'));
+  soundSec.appendChild(h('div',{style:{padding:'4px 16px'}},
+    switchRow('Звук «Больше золота» при доходе', st.replenishSound, (on)=>{ st.replenishSound=on; persist(); if(on) playReplenish(); })));
+  inner.appendChild(soundSec);
 
   body.appendChild(inner); return {bar, body};
 }
@@ -1267,14 +1358,18 @@ function buildAddForm(body, f, isEdit, rebuild){
     body.appendChild(accountRow('Счёт', f.accountId, (id)=>{ f.accountId=id; }));
     body.appendChild(h('div',{class:'gap16'}));
     body.appendChild(h('div',{class:'add-label', style:{marginBottom:'4px'}},'Категории'));
+    const allCats=popularCategoriesOfType(f.type);
+    const showInline = allCats.length<=8;
+    let visible = showInline ? allCats : allCats.slice(0,7);
+    if (!showInline && f.categoryId!=null && !visible.find(c=>c.id===f.categoryId)){ const sc=allCats.find(c=>c.id===f.categoryId); if (sc) visible=[sc,...visible.slice(0,6)]; }
     const grid=h('div',{class:'catgrid'});
-    for (const c of popularCategoriesOfType(f.type)){
-      const seld=f.categoryId===c.id;
+    for (const c of visible){ const seld=f.categoryId===c.id;
       grid.appendChild(h('button',{class:'catcell'+(seld?' sel':''), onclick:()=>{ f.categoryId=c.id; rebuild(); }},
-        avatar(c.iconKey,c.color,54,seld), h('div',{class:'cc-label'}, c.name)));
-    }
-    grid.appendChild(h('button',{class:'catcell', onclick:()=>openCategoryEdit(null,f.type,(id)=>{ f.categoryId=id; rebuild(); })},
+        avatar(c.iconKey,c.color,54,seld), h('div',{class:'cc-label'}, c.name))); }
+    if (showInline) grid.appendChild(h('button',{class:'catcell', onclick:()=>openCategoryEdit(null,f.type,(id)=>{ f.categoryId=id; rebuild(); })},
       h('div',{class:'cc-action'}, icon('add',24)), h('div',{class:'cc-label'},'Создать')));
+    else grid.appendChild(h('button',{class:'catcell', onclick:()=>openAllCategories(f.type,(id)=>{ f.categoryId=id; rebuild(); })},
+      h('div',{class:'cc-action'}, icon('search',24)), h('div',{class:'cc-label'},'Ещё')));
     body.appendChild(grid);
   } else {
     body.appendChild(accountRow('Со счёта', f.accountId, (id)=>{ f.accountId=id; if(f.toAccountId===id){ const o=S.data.accounts.find(a=>a.id!==id); f.toAccountId=o?o.id:null; } rebuild(); }));
@@ -1347,6 +1442,8 @@ function saveTransaction(f, isEdit, editing){
   if (isEdit){ const i=S.data.transactions.findIndex(t=>t.id===editing.id); if (i>=0) S.data.transactions[i]=Object.assign({}, editing, rec); toast('Сохранено'); }
   else {
     rec.id=newId(); rec.createdAt=Date.now(); S.data.transactions.push(rec);
+    if (f.type==='income') playReplenish();
+    else if (f.type==='expense') notifyAlerts();
     if (f.regular && f.type!=='transfer'){
       const anchorDay=f.date.getDate();
       S.data.recurring.push({ id:newId(), type:f.type, amount:rub, accountId:f.accountId, categoryId:f.categoryId,
@@ -1813,11 +1910,187 @@ function normalizeLoaded(data){
   data.seq=Math.max(data.seq||0, maxId+1);
   return data;
 }
+/* ================= Поиск категорий (лист «Все категории» с лупой) ========= */
+function segmentBar(items){
+  const bar=h('div',{class:'segbar'});
+  for (const it of items){ if (it.fraction<=0) continue; bar.appendChild(h('span',{style:{width:(it.fraction*100)+'%', background:safeColor(it.category.color)}})); }
+  return bar;
+}
+function openAllCategories(type, onPick){
+  let searching=false, query='';
+  const body=h('div',{});
+  function render2(){
+    body.innerHTML='';
+    const head=h('div',{style:{display:'flex',alignItems:'center',gap:'4px',padding:'0 8px 8px'}});
+    if (searching){
+      const inp=h('input',{class:'input', placeholder:'Поиск категории', value:query, style:{border:'0',background:'transparent',padding:'8px 4px'}});
+      inp.addEventListener('input',()=>{ query=inp.value; rebuildGrid(); });
+      head.appendChild(inp);
+      head.appendChild(h('button',{class:'ab-btn', onclick:()=>{ searching=false; query=''; render2(); }}, icon('close',22)));
+      body.appendChild(head); setTimeout(()=>{ try{inp.focus();}catch(_){} }, 60);
+    } else {
+      head.appendChild(h('div',{style:{flex:'1',fontWeight:'700',fontSize:'1.05rem',padding:'4px 8px'}},'Все категории'));
+      head.appendChild(h('button',{class:'ab-btn', onclick:()=>{ searching=true; render2(); }}, icon('search',22)));
+      body.appendChild(head);
+    }
+    const gridWrap=h('div',{}); body.appendChild(gridWrap);
+    function rebuildGrid(){
+      gridWrap.innerHTML='';
+      const q=query.trim().toLowerCase();
+      const list=popularCategoriesOfType(type).filter(c=>!q || c.name.toLowerCase().includes(q));
+      if (!list.length){ gridWrap.appendChild(h('div',{class:'muted', style:{textAlign:'center',padding:'24px'}},'Ничего не найдено')); return; }
+      const grid=h('div',{class:'catgrid'});
+      for (const c of list) grid.appendChild(h('button',{class:'catcell', onclick:()=>{ onPick(c.id); closeSubSheet(); }},
+        avatar(c.iconKey,c.color,54), h('div',{class:'cc-label'}, c.name)));
+      if (!searching) grid.appendChild(h('button',{class:'catcell', onclick:()=>{ closeSubSheet(); openCategoryEdit(null,type,(id)=>onPick(id)); }},
+        h('div',{class:'cc-action'}, icon('add',24)), h('div',{class:'cc-label'},'Создать')));
+      gridWrap.appendChild(grid);
+    }
+    rebuildGrid();
+  }
+  render2();
+  openSubSheet('', body);
+}
+
+/* ================= Уведомления (веб-аналог) ================= */
+function _dayStr(d){ return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate(); }
+function notifyAlerts(){
+  try{
+    if (typeof Notification==='undefined' || Notification.permission!=='granted') return;
+    const st=S.data.settings, g=gaugeData(), today=_dayStr(new Date());
+    if (st.spendAlertEnabled && g.dayRatio!=null && g.dayRatio>g.dayMax && st.lastSpendNotify!==today){
+      new Notification('Тратометр', {body:'Сегодня потрачено больше обычного на '+Math.round((g.dayRatio-1)*100)+'%'});
+      st.lastSpendNotify=today; persist();
+    }
+    if (st.limitAlertEnabled && st.monthlyLimit>0 && g.monthExpense>=st.monthlyLimit && st.lastLimitNotify!==today){
+      new Notification('Тратометр', {body:'Достигнут месячный лимит трат'});
+      st.lastLimitNotify=today; persist();
+    }
+  }catch(_){}
+}
+function screenNotifications(){
+  const bar=appbar({ left:backBtn('more'), title:'Уведомления' });
+  const body=h('main',{class:'screen'}); const inner=h('div',{class:'screen-pad flat'});
+  const st=S.data.settings;
+  const sec=h('div',{class:'section'}); sec.appendChild(h('div',{class:'section-title'},'Перерасход'));
+  sec.appendChild(h('div',{style:{padding:'4px 16px'}}, switchRow('Предупреждать о перерасходе', st.spendAlertEnabled, (on)=>{
+    if (on && typeof Notification!=='undefined' && Notification.permission!=='granted'){
+      Notification.requestPermission().then(p=>{ st.spendAlertEnabled=(p==='granted'); persist(); render(); if(p!=='granted') toast('Разрешите уведомления в браузере'); });
+    } else { st.spendAlertEnabled=on; persist(); render(); }
+  })));
+  const thrLabel=h('div',{class:'section-title'},'Порог срабатывания: +'+Math.round(st.spendAlertThreshold*100)+'%');
+  const thr=h('input',{type:'range', min:'0.10', max:'1.0', step:'0.05', value:st.spendAlertThreshold});
+  thr.addEventListener('input',()=>thrLabel.textContent='Порог срабатывания: +'+Math.round(parseFloat(thr.value)*100)+'%');
+  thr.addEventListener('change',()=>{ st.spendAlertThreshold=parseFloat(thr.value); persist(); });
+  sec.appendChild(thrLabel); sec.appendChild(h('div',{style:{padding:'0 16px 8px'}}, thr));
+  inner.appendChild(sec);
+  if (st.monthlyLimit>0){
+    const lim=h('div',{class:'section'}); lim.appendChild(h('div',{class:'section-title'},'Месячный лимит'));
+    lim.appendChild(h('div',{style:{padding:'4px 16px'}}, switchRow('Уведомлять о месячном лимите', st.limitAlertEnabled, (on)=>{
+      if (on && typeof Notification!=='undefined' && Notification.permission!=='granted'){
+        Notification.requestPermission().then(p=>{ st.limitAlertEnabled=(p==='granted'); persist(); render(); });
+      } else { st.limitAlertEnabled=on; persist(); }
+    })));
+    inner.appendChild(lim);
+  }
+  inner.appendChild(h('div',{class:'hint'},'Уведомления локальные и приходят, когда приложение открыто (веб без фоновых служб). Порог берётся из спидометра «Траты дня».'));
+  body.appendChild(inner); return {bar, body};
+}
+
+/* ================= Безопасность: блокировка PIN-кодом ================= */
+async function sha(s){
+  try{ const b=new TextEncoder().encode(s); const h=await crypto.subtle.digest('SHA-256', b); return Array.from(new Uint8Array(h)).map(x=>x.toString(16).padStart(2,'0')).join(''); }
+  catch(_){ return 'plain:'+s; }
+}
+function isLocked(){ return !!(S.data.settings.lockEnabled && S.data.settings.lockHash); }
+let _lockHiddenAt=null;
+function setupResumeLock(){
+  document.addEventListener('visibilitychange', ()=>{
+    if (document.hidden) _lockHiddenAt=Date.now();
+    else if (isLocked() && _lockHiddenAt && (Date.now()-_lockHiddenAt>15000)) showLock(()=>{});
+  });
+}
+function pinPad(onDigit){
+  const pad=h('div',{class:'lock-pad'});
+  for (const d of ['1','2','3','4','5','6','7','8','9']) pad.appendChild(h('button',{class:'lock-key', onclick:()=>onDigit(d)}, d));
+  pad.appendChild(h('span',{}));
+  pad.appendChild(h('button',{class:'lock-key', onclick:()=>onDigit('0')}, '0'));
+  pad.appendChild(h('button',{class:'lock-key', onclick:()=>onDigit('del')}, icon('back',24)));
+  return pad;
+}
+function dotsEl(n){ const d=h('div',{class:'lock-dots'}); for(let i=0;i<4;i++) d.appendChild(h('span',{class:'lock-dot'+(i<n?' on':'')})); return d; }
+function showLock(onUnlock){
+  if (document.querySelector('.lock-screen')) return;
+  let entered='';
+  const scr=h('div',{class:'lock-screen'});
+  const dotsWrap=h('div',{}); const setDots=()=>{ dotsWrap.innerHTML=''; dotsWrap.appendChild(dotsEl(entered.length)); }; setDots();
+  const press=async (d)=>{
+    if (d==='del'){ entered=entered.slice(0,-1); setDots(); return; }
+    if (entered.length>=4) return; entered+=d; setDots();
+    if (entered.length===4){
+      const hash=await sha(entered);
+      if (hash===S.data.settings.lockHash){ scr.remove(); _lockHiddenAt=null; onUnlock(); }
+      else { scr.classList.add('shake'); setTimeout(()=>{ scr.classList.remove('shake'); entered=''; setDots(); }, 420); }
+    }
+  };
+  scr.appendChild(h('img',{src:'icons/icon-192.png', class:'about-logo'}));
+  scr.appendChild(h('div',{class:'lock-title'},'Приложение заблокировано'));
+  scr.appendChild(dotsWrap);
+  scr.appendChild(pinPad(press));
+  document.body.appendChild(scr);
+}
+function setPinFlow(onDone){
+  let first=null, entered='';
+  const title=h('div',{style:{textAlign:'center',marginBottom:'10px',fontWeight:'600'}},'Придумайте PIN (4 цифры)');
+  const dotsWrap=h('div',{style:{display:'flex',justifyContent:'center'}}); const setDots=()=>{ dotsWrap.innerHTML=''; dotsWrap.appendChild(dotsEl(entered.length)); }; setDots();
+  const press=async (d)=>{
+    if (d==='del'){ entered=entered.slice(0,-1); setDots(); return; }
+    if (entered.length>=4) return; entered+=d; setDots();
+    if (entered.length===4){
+      if (first==null){ first=entered; entered=''; title.textContent='Повторите PIN'; setDots(); }
+      else if (entered===first){ const hash=await sha(entered); closeDialog(); onDone(hash); }
+      else { first=null; entered=''; title.textContent='Не совпало, придумайте PIN'; setDots(); }
+    }
+  };
+  openDialog('Блокировка', h('div',{}, title, dotsWrap, h('div',{style:{display:'flex',justifyContent:'center',marginTop:'10px'}}, pinPad(press))), [{label:'Отмена', onclick:closeDialog}]);
+}
+function verifyPinFlow(onOk){
+  let entered='';
+  const title=h('div',{style:{textAlign:'center',marginBottom:'10px',fontWeight:'600'}},'Введите текущий PIN');
+  const dotsWrap=h('div',{style:{display:'flex',justifyContent:'center'}}); const setDots=()=>{ dotsWrap.innerHTML=''; dotsWrap.appendChild(dotsEl(entered.length)); }; setDots();
+  const press=async (d)=>{
+    if (d==='del'){ entered=entered.slice(0,-1); setDots(); return; }
+    if (entered.length>=4) return; entered+=d; setDots();
+    if (entered.length===4){
+      const hash=await sha(entered);
+      if (hash===S.data.settings.lockHash){ closeDialog(); onOk(); }
+      else { title.textContent='Неверный PIN'; entered=''; setDots(); }
+    }
+  };
+  openDialog('Подтверждение', h('div',{}, title, dotsWrap, h('div',{style:{display:'flex',justifyContent:'center',marginTop:'10px'}}, pinPad(press))), [{label:'Отмена', onclick:closeDialog}]);
+}
+function screenSecurity(){
+  const bar=appbar({ left:backBtn('more'), title:'Безопасность' });
+  const body=h('main',{class:'screen'}); const inner=h('div',{class:'screen-pad flat'});
+  const st=S.data.settings;
+  const sec=h('div',{class:'section'}); sec.appendChild(h('div',{class:'section-title'},'Блокировка'));
+  sec.appendChild(h('div',{style:{padding:'4px 16px'}}, switchRow('Блокировка приложения (PIN)', st.lockEnabled, (on)=>{
+    if (on){ setPinFlow((hash)=>{ st.lockEnabled=true; st.lockHash=hash; persist(); render(); toast('Блокировка включена'); }); render(); }
+    else { verifyPinFlow(()=>{ st.lockEnabled=false; st.lockHash=null; persist(); render(); toast('Блокировка выключена'); }); render(); }
+  })));
+  sec.appendChild(h('div',{class:'helper', style:{padding:'0 16px 10px'}},'PIN из 4 цифр запрашивается при запуске и возврате из фона. Хранится только на устройстве (в виде хэша).'));
+  inner.appendChild(sec);
+  body.appendChild(inner); return {bar, body};
+}
+
+/* ================= Запуск ================= */
 async function boot(){
   const data=await loadState();
   S.data = data ? normalizeLoaded(data) : seedData();
   if (materializeRecurring()) persist();
-  render();
+  if (isLocked()) showLock(()=>render());
+  else render();
+  setupResumeLock();
 }
 boot();
 
