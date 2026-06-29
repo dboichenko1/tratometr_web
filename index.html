@@ -32,8 +32,21 @@
     // Регистрируем service worker — без него нет офлайна. Путь относительный,
     // поэтому scope совпадает с папкой приложения (корень или подпапка Pages).
     if ('serviceWorker' in navigator) {
+      // Когда новая версия SW берёт управление — перезагружаемся один раз,
+      // чтобы обновление подхватывалось с первого переоткрытия, а не «висело»
+      // в кэше. Флаг refreshing защищает от цикла перезагрузок.
+      let refreshing = false;
+      navigator.serviceWorker.addEventListener('controllerchange', () => {
+        if (refreshing) return;
+        refreshing = true;
+        window.location.reload();
+      });
       window.addEventListener('load', () => {
-        navigator.serviceWorker.register('sw.js').catch(() => {});
+        navigator.serviceWorker.register('sw.js').then((reg) => {
+          // Проверяем обновление при каждом запуске — иначе новая версия может
+          // не подтянуться, пока браузер сам не решит обновить SW.
+          reg.update().catch(() => {});
+        }).catch(() => {});
       });
     }
     // Просим браузер не вытеснять данные (важно для iOS PWA — иначе историю

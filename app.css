@@ -32,7 +32,7 @@
 }
 
 * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
-html { height: 100%; }
+html { height: 100%; width: 100%; overflow-x: hidden; }
 html, body {
   margin: 0; padding: 0;
   background: var(--bg); color: var(--text);
@@ -229,7 +229,7 @@ input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; marg
 
 /* экран добавления */
 .add-amount { display: flex; align-items: flex-end; gap: 10px; padding: 0 16px; }
-.add-amount input { flex: 1; background: transparent; border: 0; outline: none; font-size: 2rem; font-weight: 700; padding: 4px 0; }
+.add-amount input { flex: 1; min-width: 0; background: transparent; border: 0; outline: none; font-size: 2rem; font-weight: 700; padding: 4px 0; }
 .add-amount select { background: transparent; border: 0; font-size: 1.1rem; font-weight: 600; padding: 6px 2px; }
 .add-amount .cur-rub { font-size: 1.2rem; padding: 6px 2px; }
 .add-divider { height: 1px; background: var(--divider); margin: 12px 16px; }
@@ -243,7 +243,7 @@ input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; marg
 .add-label { font-size: .82rem; color: var(--text2); font-weight: 500; padding: 0 16px; }
 
 /* сетка категорий (54px) */
-.catgrid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px 12px; padding: 12px 16px 0; }
+.catgrid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px 12px; padding: 12px 16px 0; }
 .catcell { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .catcell .cc-label { font-size: .72rem; text-align: center; color: var(--text2); line-height: 1.1;
   max-width: 100%; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
@@ -319,7 +319,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); height: 30px; }
 .sheet.full { height: 100%; max-height: 100%; border-radius: 0; padding-top: var(--safe-top); }
 .sheet-head { display: flex; align-items: center; gap: 4px; padding: 8px 6px; border-bottom: 1px solid var(--divider); flex: 0 0 auto; }
 .sheet-head .sh-title { flex: 1; font-weight: 700; font-size: 1.05rem; padding: 0 4px; }
-.sheet-body { overflow-y: auto; -webkit-overflow-scrolling: touch; padding: 12px 0; flex: 1 1 auto; }
+.sheet-body { overflow-y: auto; overflow-x: hidden; -webkit-overflow-scrolling: touch; padding: 12px 0; flex: 1 1 auto; }
 .grab { width: 38px; height: 4px; border-radius: 2px; background: var(--divider); margin: 8px auto 0; flex: 0 0 auto; }
 
 .dialog-scrim { position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 110;
