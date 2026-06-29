@@ -298,7 +298,8 @@ function netByAccount(){
   return net;
 }
 function balanceOf(id, net){ const a=accountById(id); if(!a) return 0; net=net||netByAccount(); return a.initialBalance+(net[id]||0); }
-function totalBalance(net){ net=net||netByAccount(); return S.data.accounts.reduce((s,a)=>s+balanceOf(a.id,net),0); }
+function accExcluded(id){ const a=accountById(id); return !!(a && a.excludeFromTotal); }
+function totalBalance(net){ net=net||netByAccount(); return S.data.accounts.reduce((s,a)=>s+(a.excludeFromTotal?0:balanceOf(a.id,net)),0); }
 function displayedBalance(net){ return S.ui.selectedAccountId!=null ? balanceOf(S.ui.selectedAccountId,net) : totalBalance(net); }
 function categoryUsage(){ const u={}; for (const t of S.data.transactions) if (t.categoryId!=null) u[t.categoryId]=(u[t.categoryId]||0)+1; return u; }
 function popularCategoriesOfType(t){
@@ -309,12 +310,12 @@ function inRange(t, r){ return t.date>=r.start.getTime() && t.date<r.end.getTime
 function currentSlice(){
   const r=rangeFor(S.ui.periodType,S.ui.anchor,S.ui.customRange);
   const {selectedAccountId:acc, activeType:type} = S.ui;
-  return S.data.transactions.filter(t=> t.type===type && (acc==null||t.accountId===acc) && inRange(t,r));
+  return S.data.transactions.filter(t=> t.type===type && (acc==null?!accExcluded(t.accountId):t.accountId===acc) && inRange(t,r));
 }
 function currentTransfers(){
   const r=rangeFor(S.ui.periodType,S.ui.anchor,S.ui.customRange);
   const acc=S.ui.selectedAccountId;
-  return S.data.transactions.filter(t=> t.type==='transfer' && (acc==null||t.accountId===acc||t.toAccountId===acc) && inRange(t,r));
+  return S.data.transactions.filter(t=> t.type==='transfer' && (acc==null?(!accExcluded(t.accountId)||!accExcluded(t.toAccountId)):(t.accountId===acc||t.toAccountId===acc)) && inRange(t,r));
 }
 function sortTx(list){
   const s=S.ui.sort, a=list.slice();
@@ -756,7 +757,7 @@ function screenTransactions(){
   let list;
   if (isTransfer) list=sortTx(currentTransfers());
   else { const r=rangeFor(S.ui.periodType,S.ui.anchor,S.ui.customRange); const acc=S.ui.selectedAccountId;
-    list=sortTx(S.data.transactions.filter(t=>t.type===S.ui.txTab && (acc==null||t.accountId===acc) && inRange(t,r))); }
+    list=sortTx(S.data.transactions.filter(t=>t.type===S.ui.txTab && (acc==null?!accExcluded(t.accountId):t.accountId===acc) && inRange(t,r))); }
   const total=list.reduce((s,t)=>s+t.amount,0);
 
   inner.appendChild(h('div',{class:'head-row'},
@@ -826,7 +827,7 @@ function screenAnalysis(){
   for (let i=N-1;i>=0;i--){
     const a=shiftAnchor(gran,S.ui.anchor,-i), r=rangeFor(gran,a);
     let exp=0, inc=0;
-    for (const t of S.data.transactions){ if (acc!=null&&t.accountId!==acc) continue; if(!inRange(t,r)) continue;
+    for (const t of S.data.transactions){ if (acc==null?accExcluded(t.accountId):t.accountId!==acc) continue; if(!inRange(t,r)) continue;
       if (t.type==='expense') exp+=t.amount; else if (t.type==='income') inc+=t.amount; }
     buckets.push({exp,inc,label:bucketLabel(gran,a)});
   }
@@ -835,7 +836,7 @@ function screenAnalysis(){
   for (const t of S.data.transactions){ if (acc!=null&&t.accountId!==acc) continue; if(!inRange(t,r)) continue;
     if (t.type==='expense') pExp+=t.amount; else if (t.type==='income') pInc+=t.amount; }
   const periodMode=S.ui.analysisMode==='income'?'income':'expense';
-  const periodItems=breakdown(S.data.transactions.filter(t=>t.type===periodMode && (acc==null||t.accountId===acc) && inRange(t,r)));
+  const periodItems=breakdown(S.data.transactions.filter(t=>t.type===periodMode && (acc==null?!accExcluded(t.accountId):t.accountId===acc) && inRange(t,r)));
 
   const maxV=Math.max(1,...buckets.map(b=>combined?Math.max(b.exp,b.inc):(S.ui.analysisMode==='income'?b.inc:b.exp)));
   const isPie=S.ui.chartType==='pie';
@@ -965,7 +966,8 @@ function screenAccounts(){
   for (const a of S.data.accounts.slice().sort((x,y)=>x.sortOrder-y.sortOrder)){
     inner.appendChild(h('button',{class:'tile', onclick:()=>openAccountEdit(a)}, h('div',{class:'lt'},
       avatar(a.iconKey,a.color,42),
-      h('div',{class:'lt-mid'}, h('div',{class:'lt-title', style:{fontWeight:'500'}}, a.name)),
+      h('div',{class:'lt-mid'}, h('div',{class:'lt-title', style:{fontWeight:'500'}}, a.name),
+        a.excludeFromTotal?h('div',{style:{fontSize:'.78rem',color:'var(--text2)',marginTop:'2px'}},'не в общем балансе'):null),
       h('div',{class:'lt-val'}, money(balanceOf(a.id,net))))));
   }
   body.appendChild(inner); return {bar, body};
@@ -1257,7 +1259,8 @@ function openAccountSelector(){
   for (const a of S.data.accounts){
     body.appendChild(h('button',{class:'lt', onclick:()=>{ S.ui.selectedAccountId=a.id; closeSheet(); render(); }},
       avatar(a.iconKey,a.color,40),
-      h('div',{class:'lt-mid'}, h('div',{class:'lt-title'}, a.name)),
+      h('div',{class:'lt-mid'}, h('div',{class:'lt-title'}, a.name),
+        a.excludeFromTotal?h('div',{style:{fontSize:'.76rem',color:'var(--text2)',marginTop:'2px'}},'не в общем балансе'):null),
       h('span',{class:'lt-trail'}, h('span',{class:'lt-val'}, money(balanceOf(a.id,net))), S.ui.selectedAccountId===a.id?h('span',{class:'lt-check'}, icon('check',22)):null)));
   }
   openSheet({title:'Счёт', body});
@@ -1295,7 +1298,7 @@ function openPeriodPicker(){
 /* Операции одной категории */
 function openCategoryTx(category){
   const r=rangeFor(S.ui.periodType,S.ui.anchor,S.ui.customRange), acc=S.ui.selectedAccountId;
-  const list=sortTx(S.data.transactions.filter(t=>t.categoryId===category.id && (acc==null||t.accountId===acc) && inRange(t,r)));
+  const list=sortTx(S.data.transactions.filter(t=>t.categoryId===category.id && (acc==null?!accExcluded(t.accountId):t.accountId===acc) && inRange(t,r)));
   const total=list.reduce((s,t)=>s+t.amount,0);
   const body=h('div',{});
   body.appendChild(h('div',{class:'head-row'}, h('div',{class:'h-total'},'Всего: '+money(total))));
@@ -1554,7 +1557,7 @@ function deleteCategory(cat){
 /* ================= Редактирование счёта ================= */
 function openAccountEdit(acc){
   const isEdit=!!acc;
-  const f={ name:acc?acc.name:'', initialBalance:acc?String(acc.initialBalance):'', iconKey:acc?acc.iconKey:'wallet', color:acc?acc.color:PALETTE[6] };
+  const f={ name:acc?acc.name:'', initialBalance:acc?String(acc.initialBalance):'', iconKey:acc?acc.iconKey:'wallet', color:acc?acc.color:PALETTE[6], excludeFromTotal:acc?!!acc.excludeFromTotal:false };
   const body=h('div',{});
   const rebuild=()=>{ body.innerHTML=''; buildAccountForm(body, f, isEdit, acc, rebuild); };
   rebuild();
@@ -1572,12 +1575,14 @@ function buildAccountForm(body, f, isEdit, acc, rebuild){
   body.appendChild(iconPicker(f, rebuild));
   body.appendChild(h('div',{class:'add-label', style:{margin:'16px 0 8px'}},'Цвет'));
   body.appendChild(colorPicker(f, rebuild));
+  body.appendChild(switchRow('Не учитывать в «Все счета»', f.excludeFromTotal, (on)=>{ f.excludeFromTotal=on; }));
+  body.appendChild(h('div',{class:'helper', style:{textAlign:'left',marginTop:'-4px'}},'Счёт не войдёт в общий баланс и сводки по «Все счета». Сам счёт и его операции останутся.'));
   body.appendChild(h('div',{class:'gap16'}));
   body.appendChild(h('div',{style:{padding:'0 16px'}}, h('button',{class:'btn primary', onclick:()=>{
     const name=f.name.trim(); if (!name){ toast('Введите название счёта',true); return; }
     const bal=parseAmount(f.initialBalance)||0;
-    if (isEdit) Object.assign(accountById(acc.id),{name, initialBalance:bal, iconKey:f.iconKey, color:f.color});
-    else { const order=Math.max(0,...S.data.accounts.map(a=>a.sortOrder))+1; S.data.accounts.push({id:newId(), name, initialBalance:bal, iconKey:f.iconKey, color:f.color, sortOrder:order}); }
+    if (isEdit) Object.assign(accountById(acc.id),{name, initialBalance:bal, iconKey:f.iconKey, color:f.color, excludeFromTotal:f.excludeFromTotal});
+    else { const order=Math.max(0,...S.data.accounts.map(a=>a.sortOrder))+1; S.data.accounts.push({id:newId(), name, initialBalance:bal, iconKey:f.iconKey, color:f.color, sortOrder:order, excludeFromTotal:f.excludeFromTotal}); }
     persist(); closeSheet(); render(); toast('Сохранено');
   }}, isEdit?'Сохранить':'Добавить')));
   if (isEdit) body.appendChild(h('div',{style:{padding:'8px 16px 0'}}, h('button',{class:'btn danger', onclick:()=>{
